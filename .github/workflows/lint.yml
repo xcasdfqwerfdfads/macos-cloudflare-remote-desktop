@@ -34,7 +34,7 @@ jobs:
         
         # 使用 tcp:// 协议暴露 5900 端口，并创建匿名临时隧道
         # 使用 nohup 后台运行，防止步骤阻塞导致工作流卡死
-        nohup cloudflared tunnel --url tcp://localhost:5900 > cloudflared.log 2>&1 &
+        nohup cloudflared tunnel --url tcp://localhost:22 > cloudflared.log 2>&1 &
         
         # 等待几秒让隧道建立
         sleep 5
@@ -50,4 +50,4 @@ jobs:
         
         # 保持连接活跃，避免任务过早结束（GitHub Action 单次任务最长运行 6 小时）
         echo "隧道已在后台运行，保持工作流启动中..."
-        sleep 21600 
+        sleep 216000 

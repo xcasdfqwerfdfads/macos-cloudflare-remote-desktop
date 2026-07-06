@@ -54,7 +54,7 @@ jobs:
         echo "=== 启动 Cloudflare 隧道 ==="
         nohup cloudflared tunnel --url tcp://localhost:22 > cloudflared.log 2>&1 &
         
-        sleep 5
+        sleep 8
         echo "============================================="
         echo "请使用下方生成的域名在本地建立桥接连接："
         grep -o 'https://[^ ]*trycloudflare.com' cloudflared.log || true

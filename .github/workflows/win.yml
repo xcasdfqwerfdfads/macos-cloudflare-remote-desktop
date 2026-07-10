@@ -1,53 +1,71 @@
-name: Windows RDP Cloudflare Tunnel
+name: wwww
 
 on:
   workflow_dispatch:
-
+permissions:
+  id-token: write
 jobs:
-  build:
+  rdp:
     runs-on: windows-latest
+
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-      
-      - name: Enable RDP and set password
-        shell: powershell
-        run: |
-          Write-Host "=== 启用远程桌面 ==="
-      
-          # 启用 RDP
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
-      
-          # 开启防火墙规则
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-      
-          # 设置 runner 用户密码（必须）
-          $password = ConvertTo-SecureString "P@ssw0rd123!" -AsPlainText -Force
-          Set-LocalUser -Name "runneradmin" -Password $password
-      
-          Write-Host "RDP 已开启，用户名: runneradmin"
-      
-      - name: Download cloudflared
-        shell: powershell
-        run: |
-          Invoke-WebRequest -Uri https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe -OutFile cloudflared.exe
-      
-      - name: Start Cloudflare Tunnel
-        shell: powershell
-        run: |
-          Write-Host "=== 启动 Cloudflare Tunnel (RDP 3389) ==="
-      
-          Start-Process -NoNewWindow -FilePath ".\cloudflared.exe" -ArgumentList "tunnel --url tcp://localhost:3389" -RedirectStandardOutput "cloudflared.log" -RedirectStandardError "cloudflared.log"
-      
-          Start-Sleep -Seconds 10
-      
-          Write-Host "============================================="
-          Write-Host "复制下面的地址，用 Cloudflare TCP 方式连接："
-          Get-Content cloudflared.log | Select-String "trycloudflare.com"
-          Write-Host "============================================="
-      
-          Write-Host "账号: runneradmin"
-          Write-Host "密码: P@ssw0rd123!"
-      
-          # 保持运行
-          Start-Sleep -Seconds 21800
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Set strong password for current user
+      shell: powershell
+      run: |
+        Write-Host "Changing password for user: $user"
+        net user runneradmin 1qaz@WSX
+
+        # 确保允许 RDP
+        Set-ItemProperty `
+          -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" `
+          -Name "fDenyTSConnections" -Value 0
+        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+
+    - name: Download 
+      shell: powershell
+      run: |
+        Invoke-WebRequest `
+          -Uri https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe `
+          -OutFile cloudflared.exe
+    - name: Start cloudflared in background and post URL
+      shell: pwsh
+      env:
+        WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+      run: |
+        $ErrorActionPreference = "Stop"
+
+        # 日志文件（只在 runner 本地）
+        $log = "$PWD\cloudflared.log"
+
+        # 后台启动（关键：不用 Start-Process）
+        Start-Job -ScriptBlock {
+          & "$using:PWD\cloudflared.exe" tunnel --url tcp://localhost:3389 `
+            > "$using:log" 2>&1
+        } | Out-Null
+
+        # 等待 trycloudflare URL
+        $url = $null
+        for ($i = 0; $i -lt 60; $i++) {
+          Start-Sleep 1
+          if (Test-Path $log) {
+            $regex = [regex]'https://[^\s]+\.trycloudflare\.com'
+            $match = Select-String -Path $log -Pattern $regex | Select-Object -First 1
+            if ($match) {
+              $url = $match.Matches[0].Value
+              break
+            }
+          }
+        }
+
+        if (-not $url) {
+          Write-Error "Failed to obtain trycloudflare URL"
+        }
+
+        Write-Host "Tunnel ready (URL sent to webhook) $url"
+        Write-Host "RDP is ready. Keeping runner alive..."
+        while ($true) {
+          Start-Sleep -Seconds 300
+        }

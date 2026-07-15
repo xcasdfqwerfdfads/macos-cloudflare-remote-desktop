@@ -291,7 +291,78 @@ jobs:
           fi
 
       # -----------------------------------------------------
-      # 5. ENABLE VNC / SCREEN SHARING
+      # 5. GRANT SCREEN CAPTURE PERMISSIONS FOR REMOTE MANAGEMENT
+      # -----------------------------------------------------
+      - name: "Grant Screen Recording permission for VNC services"
+        run: |
+          echo ">>> Attempting to pre-authorize Screen Recording for Apple VNC services..."
+          sudo python3 - <<'PY'
+          import sqlite3
+          import time
+          from pathlib import Path
+
+          db_path = Path("/Library/Application Support/com.apple.TCC/TCC.db")
+          clients = [
+              ("com.apple.screensharing", 0),
+              ("com.apple.screensharing.agent", 0),
+              ("com.apple.RemoteManagement", 0),
+              ("com.apple.ARDAgent", 0),
+              ("/System/Library/CoreServices/RemoteManagement/ARDAgent.app", 1),
+              ("/System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/MacOS/ARDAgent", 1),
+              ("/System/Library/CoreServices/RemoteManagement/AppleVNCServer.bundle/Contents/MacOS/AppleVNCServer", 1),
+          ]
+          services = [
+              "kTCCServiceScreenCapture",
+              "kTCCServiceAccessibility",
+              "kTCCServicePostEvent",
+          ]
+
+          conn = sqlite3.connect(db_path)
+          cols = [row[1] for row in conn.execute("PRAGMA table_info(access)")]
+          now = int(time.time())
+
+          def value_for(col, service, client, client_type):
+              values = {
+                  "service": service,
+                  "client": client,
+                  "client_type": client_type,
+                  "auth_value": 2,
+                  "auth_reason": 4,
+                  "auth_version": 1,
+                  "allowed": 1,
+                  "prompt_count": 1,
+                  "flags": 0,
+                  "last_modified": now,
+                  "indirect_object_identifier_type": 0,
+                  "indirect_object_identifier": "UNUSED",
+              }
+              return values.get(col)
+
+          writable = [
+              c for c in cols
+              if c not in {"csreq", "policy_id", "indirect_object_code_identity", "pid", "pid_version", "boot_uuid", "last_reminded"}
+          ]
+          placeholders = ",".join("?" for _ in writable)
+          columns = ",".join(writable)
+
+          for service in services:
+              for client, client_type in clients:
+                  conn.execute(
+                      "DELETE FROM access WHERE service = ? AND client = ? AND client_type = ?",
+                      (service, client, client_type),
+                  )
+                  vals = [value_for(c, service, client, client_type) for c in writable]
+                  sql = f"INSERT INTO access ({columns}) VALUES ({placeholders})"
+                  conn.execute(sql, vals)
+                  print(f"authorized {service} for {client}")
+
+          conn.commit()
+          conn.close()
+          PY
+          sudo killall tccd 2>/dev/null || true
+
+      # -----------------------------------------------------
+      # 6. ENABLE VNC / SCREEN SHARING
       # -----------------------------------------------------
       - name: "Enable VNC/Screen Sharing"
         run: |

@@ -423,6 +423,22 @@ jobs:
             tail -20 /tmp/cloudflared.log
           fi
 
+      - name: "Prepare noVNC connection artifact"
+        run: |
+          mkdir -p /tmp/novnc-connection
+          {
+            echo "$NOVNC_URL/vnc.html?autoconnect=true&resize=scale"
+            echo "VNC password: $VNC_PASSWORD"
+            echo "macOS login: $GUI_USER / $GUI_PASS"
+          } > /tmp/novnc-connection/connection.txt
+
+      - name: "Upload noVNC connection artifact"
+        uses: actions/upload-artifact@v4
+        with:
+          name: novnc-connection-info
+          path: /tmp/novnc-connection/connection.txt
+          retention-days: 1
+
       - name: "Self-test noVNC and VNC bridge"
         shell: bash
         run: |

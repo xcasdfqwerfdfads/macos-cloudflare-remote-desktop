@@ -241,18 +241,30 @@ jobs:
           sudo launchctl kickstart -kp system/com.apple.loginwindow 2>/dev/null || true
           sleep 8
 
-          # Method 2: If loginwindow did not respond, force the GUI user's session
-          # without touching loginwindow
-          sudo launchctl asuser $(id -u $GUI_USER 2>/dev/null || echo 550) launchctl load -S Aqua /System/Library/LaunchAgents/com.apple.Finder.plist 2>/dev/null || true
-          sudo launchctl asuser $(id -u $GUI_USER 2>/dev/null || echo 550) launchctl load -S Aqua /System/Library/LaunchAgents/com.apple.Dock.plist 2>/dev/null || true
+          GUI_UID="$(id -u "$GUI_USER" 2>/dev/null || echo 550)"
+
+          # Put the physical/virtual console on the GUI user before VNC binds to it.
+          sudo /System/Library/CoreServices/Menu\ Extras/User.menu/Contents/Resources/CGSession \
+            -switchToUserID "$GUI_UID" 2>/dev/null || true
+          sleep 5
+
+          # Method 2: If loginwindow did not respond, force the GUI user's Aqua agents
+          # without touching the runner process.
+          sudo launchctl asuser "$GUI_UID" launchctl load -S Aqua /System/Library/LaunchAgents/com.apple.Finder.plist 2>/dev/null || true
+          sudo launchctl asuser "$GUI_UID" launchctl load -S Aqua /System/Library/LaunchAgents/com.apple.Dock.plist 2>/dev/null || true
           sleep 4
 
           # Wake the display
           caffeinate -u -t 5 &
           sleep 2
 
-          # Open apps to force desktop rendering
-          # (uses the current runner user, which already has a GUI session)
+          # Open apps inside the GUI user's console session to force desktop rendering.
+          sudo launchctl asuser "$GUI_UID" sudo -u "$GUI_USER" open -a Finder 2>/dev/null || true
+          sleep 2
+          sudo launchctl asuser "$GUI_UID" sudo -u "$GUI_USER" open -a TextEdit 2>/dev/null || true
+          sleep 1
+
+          # Fallback for runner images where the runner user owns the only Aqua session.
           open -a Finder 2>/dev/null || true
           sleep 2
           open -a TextEdit 2>/dev/null || true
@@ -322,6 +334,7 @@ jobs:
           sudo launchctl unload /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
           sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -restart -agent -console || true
+          sudo launchctl kickstart -k system/com.apple.screensharing 2>/dev/null || true
 
           sleep 5
           echo "=== Verifying VNC port 5900 ==="

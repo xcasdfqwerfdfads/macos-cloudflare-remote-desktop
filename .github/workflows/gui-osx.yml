@@ -146,6 +146,7 @@ jobs:
 
               signal(SIGINT, SIG_IGN);
               signal(SIGTERM, SIG_IGN);
+              signal(SIGHUP, SIG_IGN);
               [[NSRunLoop mainRunLoop] run];
             }
             return 0;
@@ -158,8 +159,9 @@ jobs:
             -framework CoreGraphics \
             -o /tmp/create-display 2>/tmp/display-compile-error.log; then
             echo "Compiled OK"
-            /tmp/create-display > /tmp/display-output.log 2>&1 &
+            nohup /tmp/create-display > /tmp/display-output.log 2>&1 &
             VDPID=$!
+            echo "$VDPID" > /tmp/create-display.pid
             sleep 4
 
             if kill -0 $VDPID 2>/dev/null; then
@@ -269,6 +271,16 @@ jobs:
       # -----------------------------------------------------
       - name: "Enable VNC and Screen Sharing"
         run: |
+          echo ">>> Verifying virtual display before starting VNC..."
+          if [ -f /tmp/create-display.pid ] && kill -0 "$(cat /tmp/create-display.pid)" 2>/dev/null; then
+            echo "Virtual display helper is still running (PID: $(cat /tmp/create-display.pid))"
+            cat /tmp/display-output.log 2>/dev/null || true
+          else
+            echo "Virtual display helper is not running; VNC may show a black screen."
+            cat /tmp/display-output.log 2>/dev/null || true
+          fi
+          system_profiler SPDisplaysDataType 2>/dev/null | head -40 || true
+
           echo ">>> Configuring Apple Remote Desktop + Legacy VNC..."
 
           # Step 1: Configure ARD with Legacy VNC enabled
@@ -337,7 +349,7 @@ jobs:
           cat > /tmp/noVNC/index.html << 'REDIRECT'
           <!DOCTYPE html>
           <html>
-          <head><meta http-equiv="refresh" content="0;url=vnc.html?autoconnect=true&resize=scale"></head>
+          <head><meta http-equiv="refresh" content="0;url=vnc.html?autoconnect=true&resize=remote"></head>
           <body>Redirecting to noVNC...</body>
           </html>
           REDIRECT

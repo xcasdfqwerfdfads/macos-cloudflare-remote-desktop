@@ -9,9 +9,9 @@ jobs:
     timeout-minutes: 360
 
     env:
-      VNC_PASSWORD: mac2026A
+      VNC_PASSWORD: ${{ secrets.PASSWORD || 'mac2026A' }}
       GUI_USER: macgui
-      GUI_PASS: mac2026A
+      GUI_PASS: ${{ secrets.PASSWORD || 'mac2026A' }}
 
     steps:
       - name: "Mask remote desktop credentials"
@@ -84,7 +84,7 @@ jobs:
           # Create /etc/kcpassword (XOR-encoded password for auto-login)
           echo ">>> Generating kcpassword..."
           if [ -f "$HOME/bootstrap/kcpassword.py" ]; then
-            sudo python3 "$HOME/bootstrap/kcpassword.py" "mac2026A"
+            sudo python3 "$HOME/bootstrap/kcpassword.py" "$GUI_PASS"
           else
             mkdir -p "$HOME/bootstrap"
             cat > "$HOME/bootstrap/kcpassword.py" << 'PY'
@@ -99,7 +99,7 @@ jobs:
           Path("/tmp/kcpassword").write_bytes(encoded)
           print(f"kcpassword generated ({len(encoded)} bytes)")
           PY
-            python3 "$HOME/bootstrap/kcpassword.py" "mac2026A"
+            python3 "$HOME/bootstrap/kcpassword.py" "$GUI_PASS"
             sudo cp /tmp/kcpassword /etc/kcpassword
           fi
           sudo chmod 600 /etc/kcpassword
@@ -375,13 +375,67 @@ jobs:
             tail -20 /tmp/cloudflared.log
           fi
 
+      - name: "Start Cloudflare Tunnel (SSH)"
+        run: |
+          echo ">>> Enabling Remote Login (sshd)..."
+          sudo systemsetup -setremotelogin on 2>/dev/null || true
+          sudo launchctl enable system/com.openssh.sshd 2>/dev/null || true
+          sudo launchctl kickstart -k system/com.openssh.sshd 2>/dev/null || true
+
+          echo "=== Verifying SSH on localhost:22 ==="
+          for i in $(seq 1 20); do
+            if nc -z 127.0.0.1 22 2>/dev/null; then
+              echo "SSH is listening on 127.0.0.1:22"
+              break
+            fi
+            sleep 2
+          done
+
+          cloudflared tunnel --url ssh://localhost:22 --no-autoupdate > /tmp/cloudflared-ssh.log 2>&1 &
+
+          echo "Waiting for SSH Cloudflare URL..."
+          SSH_URL=""
+          for i in $(seq 1 40); do
+            SSH_URL=$(grep -oE 'https://[a-zA-Z0-9._-]+\.trycloudflare\.com' /tmp/cloudflared-ssh.log | head -1)
+            if [ -n "$SSH_URL" ]; then
+              SSH_HOST="${SSH_URL#https://}"
+              echo "SSH_URL=$SSH_URL" >> $GITHUB_ENV
+              echo "SSH_HOST=$SSH_HOST" >> $GITHUB_ENV
+              echo "Cloudflare SSH Tunnel is ready!"
+              echo ""
+              echo "==================================================="
+              echo "  SSH VIA CLOUDFLARED:"
+              echo "  cloudflared access ssh --hostname $SSH_HOST"
+              echo "  ssh -o ProxyCommand='cloudflared access ssh --hostname %h' $GUI_USER@$SSH_HOST"
+              echo "  macOS login: $GUI_USER"
+              echo "==================================================="
+              break
+            fi
+            sleep 2
+          done
+
+          if [ -z "$SSH_URL" ]; then
+            echo "SSH Cloudflare tunnel could not start"
+            tail -20 /tmp/cloudflared-ssh.log
+          fi
+
       - name: "Prepare noVNC connection artifact"
         run: |
           mkdir -p /tmp/novnc-connection
           {
+            echo "noVNC:"
             echo "$NOVNC_URL/vnc.html?autoconnect=true&resize=scale"
             echo "VNC password: $VNC_PASSWORD"
             echo "macOS login: $GUI_USER / $GUI_PASS"
+            echo ""
+            echo "SSH:"
+            if [ -n "${SSH_HOST:-}" ]; then
+              echo "cloudflared access ssh --hostname $SSH_HOST"
+              echo "ssh -o ProxyCommand='cloudflared access ssh --hostname %h' $GUI_USER@$SSH_HOST"
+              echo "macOS login: $GUI_USER / $GUI_PASS"
+            else
+              echo "SSH Cloudflare tunnel unavailable"
+            fi
           } > /tmp/novnc-connection/connection.txt
 
       - name: "Upload noVNC connection artifact"
@@ -558,6 +612,19 @@ jobs:
           fi
           echo ""
           echo "----------------------------------------------------------------"
+          echo "  OPTION C: SSH VIA CLOUDFLARED"
+          echo "----------------------------------------------------------------"
+          if [ -n "$SSH_HOST" ]; then
+            echo "  Command:"
+            echo "     cloudflared access ssh --hostname $SSH_HOST"
+            echo "     ssh -o ProxyCommand='cloudflared access ssh --hostname %h' $GUI_USER@$SSH_HOST"
+            echo "  macOS login:"
+            echo "     $GUI_USER / $GUI_PASS"
+          else
+            echo "  (SSH Cloudflare tunnel is not available)"
+          fi
+          echo ""
+          echo "----------------------------------------------------------------"
           echo "=================================================================="
 
       - name: "Write Summary"
@@ -574,6 +641,13 @@ jobs:
           if [ -n "$BORE_VNC" ]; then
             echo "### VNC Client" >> $GITHUB_STEP_SUMMARY
             echo "Server: \`$BORE_VNC\` | Password: \`$VNC_PASSWORD\`" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -n "$SSH_HOST" ]; then
+            echo "### SSH via Cloudflare" >> $GITHUB_STEP_SUMMARY
+            echo "\`cloudflared access ssh --hostname $SSH_HOST\`" >> $GITHUB_STEP_SUMMARY
+            echo "\`ssh -o ProxyCommand='cloudflared access ssh --hostname %h' $GUI_USER@$SSH_HOST\`" >> $GITHUB_STEP_SUMMARY
+            echo "macOS login: \`$GUI_USER\` / \`$GUI_PASS\`" >> $GITHUB_STEP_SUMMARY
           fi
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "---" >> $GITHUB_STEP_SUMMARY

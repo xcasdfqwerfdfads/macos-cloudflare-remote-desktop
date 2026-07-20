@@ -1,4 +1,4 @@
-name: wwww
+name: linux
 
 on:
   workflow_dispatch:

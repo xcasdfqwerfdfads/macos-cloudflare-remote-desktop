@@ -64,7 +64,19 @@ jobs:
           Write-Error "Failed to obtain trycloudflare URL"
         }
 
-        Write-Host "Tunnel ready (URL sent to webhook) $url"
+        Write-Host ""
+        Write-Host "============================================================"
+        Write-Host "Cloudflare tunnel URL:"
+        Write-Host "$url"
+        Write-Host "============================================================"
+        Write-Host "::notice title=Cloudflare tunnel URL::$url"
+
+        @"
+        ## Cloudflare tunnel URL
+
+        $url
+        "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
         Write-Host "RDP is ready. Keeping runner alive..."
         while ($true) {
           Start-Sleep -Seconds 300
